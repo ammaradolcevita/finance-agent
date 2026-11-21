@@ -5,6 +5,7 @@ Run from the repo folder:
     uv run --env-file .env python -m app.admin create-reader
     uv run --env-file .env python -m app.admin seed-categories ../private-data/categories.yaml
     uv run --env-file .env python -m app.admin check
+    uv run python -m app.admin new-token [--next]
 
 Nothing here ever prints a password or a connection string.
 """
@@ -140,11 +141,22 @@ def check() -> int:
     return 0 if all(ok for _, ok in results) else 1
 
 
+def new_token(next_token: bool = False) -> None:
+    """Creates a random 43-character token and writes it into .env (never printed).
+    --next writes MCP_TOKEN_NEXT, for a swap without downtime: both work until the old one is removed."""
+    key = "MCP_TOKEN_NEXT" if next_token else "MCP_TOKEN"
+    _write_env_value(key, secrets.token_urlsafe(32))
+    print(f"{key} written to .env (not shown)")
+
+
 def main(argv: list[str]) -> int:
-    commands = {"migrate", "create-reader", "seed-categories", "check"}
+    commands = {"migrate", "create-reader", "seed-categories", "check", "new-token"}
     if not argv or argv[0] not in commands:
         print(f"usage: python -m app.admin {{{'|'.join(sorted(commands))}}} [args]")
         return 2
+    if argv[0] == "new-token":
+        new_token(next_token="--next" in argv[1:])
+        return 0
     try:
         if argv[0] == "migrate":
             migrate()
