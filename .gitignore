@@ -1,0 +1,38 @@
+# --- secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- data (real data lives outside the repo, in ../private-data) ---
+*.csv
+!examples/*.csv
+*.dump
+*.sql.gz
+backups/
+private-data/
+notes/
+receipts/
+
+# --- personal workspace files (in case they get copied inside) ---
+/CLAUDE.md
+/PLAN.md
+/PROGRESS.md
+/START_HERE.md
+
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# --- system ---
+.DS_Store
+.idea/
+.vscode/

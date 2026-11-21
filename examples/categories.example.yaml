@@ -1,0 +1,18 @@
+# MADE-UP example categories for demos and tests.
+# Your real categories live outside the repo (../private-data/categories.yaml).
+#
+# kind: regular    — everyday life (counts toward the daily average and the forecast)
+#       structural — one-off or fixed costs (rent, tickets, gifts); NOT in the daily average
+# type: expense | transfer  (transfer = moving money between your own accounts, not spending)
+
+categories:
+  - {name: Groceries,      kind: regular,    type: expense}
+  - {name: Eating out,     kind: regular,    type: expense}
+  - {name: Coffee,         kind: regular,    type: expense}
+  - {name: Transport,      kind: regular,    type: expense}
+  - {name: Household,      kind: regular,    type: expense}
+  - {name: Health,         kind: regular,    type: expense}
+  - {name: Rent,           kind: structural, type: expense}
+  - {name: Travel tickets, kind: structural, type: expense}
+  - {name: Gifts,          kind: structural, type: expense}
+  - {name: Savings,        kind: structural, type: transfer}

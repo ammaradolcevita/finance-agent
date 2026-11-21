@@ -1,0 +1,9 @@
+Date,Amount,Currency,Account,Transfer,Category,Note,Tags,Counterparty,Place
+2026-03-02 09:15:00,-3.40,EUR,Main card,,Coffee,flat white,,,
+2026-03-02 18:42:00,-24.87,EUR,Main card,,Groceries,"bread, eggs, apples, pasta",,,
+2026-03-03 12:30:00,-11.50,EUR,Main card,,Eating out,lunch soup + sandwich,,,
+2026-03-04 08:05:00,-4,EUR,Main card,,Transport,bus ticket,,,
+2026-03-05 10:00:00,-750,EUR,Main card,,Rent,March rent,,,
+2026-03-06 19:20:00,-9.99,USD,Main card,,Household,app subscription,,,
+2026-03-07 14:00:00,1500,EUR,Main card,,,salary,,,
+2026-03-08 16:10:00,-6.25,EUR,Main card,,,unknown card payment,,,
