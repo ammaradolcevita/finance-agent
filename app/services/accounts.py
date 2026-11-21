@@ -5,7 +5,7 @@ Services never commit: the tool layer runs one database transaction per tool cal
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -13,7 +13,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from app.errors import UserError
-from app.models import AccountChangeOut, AccountOut, AddAccountOut
+from app.models import AccountChangeOut, AccountOut, AddAccountOut, BalanceOut
 from app.services.dates import check_when, resolve_when
 from app.services.resolve import Candidate, resolve
 
@@ -143,6 +143,44 @@ def add_account(
 
     account = next(a for a in list_accounts(conn, include_archived=True) if a.id == account_id)
     return AddAccountOut(account=account, opening_transaction_id=opening_id, warnings=warnings)
+
+
+def balances_on(conn: psycopg.Connection, tz: ZoneInfo, now: datetime, account: str | None = None,
+                on: str | None = None) -> list[BalanceOut]:
+    """Balance of one account (or all active ones) at the end of a day (default: right now).
+    Coin accounts give coins held and net euros put in; their value in euros needs a price (added later)."""
+    today = now.astimezone(tz).date()
+    try:
+        day = date.fromisoformat(on) if on else today
+    except ValueError as e:
+        raise UserError("invalid_date", "The date must be YYYY-MM-DD.") from e
+    if day > today:
+        raise UserError("invalid_date", "That date is in the future; balances exist only up to today.")
+    at = now if day == today else datetime.combine(day, time.max, tzinfo=tz)
+
+    rows = conn.execute("SELECT id, name, unit FROM accounts WHERE is_active OR %s ORDER BY lower(name)",
+                        (account is not None,)).fetchall()
+    if account:
+        m = resolve(account, [Candidate(r[0], r[1]) for r in rows], allow_fuzzy=False)
+        if m.kind == "none":
+            hint = f" Did you mean: {', '.join(m.suggestions)}?" if m.suggestions else ""
+            raise UserError("unknown_account", f'No account called "{account}".{hint}')
+        rows = [r for r in rows if r[0] == m.candidate.id]
+
+    result = []
+    for account_id, name, unit in rows:
+        euros, coins = balance_at(conn, account_id, at)
+        opened = opening_moment(conn, account_id)
+        note = None
+        if opened and opened > at:
+            note = f"The account's records start on {opened.astimezone(tz):%d %b %Y}; nothing is known before that."
+        if unit == "EUR":
+            result.append(BalanceOut(account=name, unit=unit, on=day, balance_eur=euros, note=note))
+        else:
+            result.append(BalanceOut(account=name, unit=unit, on=day, units=coins, net_invested_eur=euros,
+                                     note=note or "Value in euros = coins × price on that day (price lookup comes "
+                                                  "later; ask the user or look it up and say it's an estimate)."))
+    return result
 
 
 def update_account(conn: psycopg.Connection, name: str, *, new_name: str | None = None,

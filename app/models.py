@@ -223,6 +223,39 @@ class Flow(BaseModel):
     amount_eur: Decimal
 
 
+class CategoryRate(BaseModel):
+    category: str
+    parent: str | None = None
+    spent_in_window_eur: Decimal
+    avg_per_day_eur: Decimal
+
+
+class ForecastOut(BaseModel):
+    account: str
+    today: date
+    balance_eur: Decimal = Field(description="Current balance (or the balance the user gave)")
+    spent_this_month_eur: Decimal = Field(description="All spending on this account this month so far")
+    spent_this_month_regular_eur: Decimal
+    days_left: int = Field(description="Days after today until the end of the month")
+    window_from: date = Field(description="Start of the period the averages are based on")
+    days_of_data: int
+    avg_per_day_eur: Decimal = Field(description="Average REGULAR spending per day on this account")
+    by_category: list[CategoryRate]
+    projected_rest_of_month_eur: Decimal = Field(description="avg_per_day × days_left (baseline only)")
+    expected_end_balance_eur: Decimal = Field(description="balance − projected (baseline only)")
+    notes: list[str] = Field(default_factory=list)
+
+
+class BalanceOut(BaseModel):
+    account: str
+    unit: str
+    on: date
+    balance_eur: Decimal | None = Field(None, description="EUR accounts: balance at the end of that day")
+    units: Decimal | None = Field(None, description="Coin accounts: coins held at the end of that day")
+    net_invested_eur: Decimal | None = Field(None, description="Coin accounts: euros put in minus taken out")
+    note: str | None = None
+
+
 class OverviewOut(BaseModel):
     date_from: date
     date_to: date

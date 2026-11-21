@@ -26,10 +26,12 @@ from app.auth import BearerAuthMiddleware
 from app.config import Settings, load_settings
 from app.errors import UserError
 from app.instructions import SERVER_INSTRUCTIONS
-from app.models import (AccountChangeOut, AddAccountOut, CategoryChangeOut, ContextOut, FindOut, MergeOut,
-                        OverviewOut, PreviewOut, QueryOut, SaveOut, TransactionIn, TxType, UpdateOut, VoidOut)
+from app.models import (AccountChangeOut, AddAccountOut, BalanceOut, CategoryChangeOut, ContextOut, FindOut,
+                        ForecastOut, MergeOut, OverviewOut, PreviewOut, QueryOut, SaveOut, TransactionIn, TxType,
+                        UpdateOut, VoidOut)
 from app.services import accounts as accounts_service
 from app.services import categories as categories_service
+from app.services import forecast as forecast_service
 from app.services import overview as overview_service
 from app.services import query as query_service
 from app.services import context as context_service
@@ -283,6 +285,27 @@ def accounts_overview(date_from: str | None = None, date_to: str | None = None,
     and don't present the numbers as correct."""
     with db.tx() as conn:
         return overview_service.accounts_overview(conn, settings().timezone, _now(), date_from, date_to, account)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Forecast baseline", read_only_hint=True))
+@logged_tool
+def forecast_month(account: str | None = None, balance_eur: Decimal | None = None) -> ForecastOut:
+    """Baseline facts for "will my money last until the end of the month?" for the spending account (default
+    expense account unless named): balance (or the one the user gives), spent this month, average REGULAR
+    spending per day overall and per category (last 60 days, never before the account's opening), days left
+    after today, projected rest-of-month spending and expected end balance, and how many days of data it's
+    based on. This is only the baseline: adjust it with the user's context, explain, and label your estimates."""
+    with db.tx() as conn:
+        return forecast_service.forecast_month(conn, settings().timezone, _now(), account, balance_eur)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Balance on a date", read_only_hint=True))
+@logged_tool
+def account_balance(account: str | None = None, date: str | None = None) -> list[BalanceOut]:
+    """Balance of one account (exact name) or of all active accounts at the end of a day (YYYY-MM-DD;
+    default: now). Coin accounts give coins held and net euros put in."""
+    with db.tx() as conn:
+        return accounts_service.balances_on(conn, settings().timezone, _now(), account, date)
 
 
 @mcp.custom_route("/health", methods=["GET"])

@@ -64,11 +64,10 @@ def reader_conn(db_conn):
 
 @pytest.fixture
 def world(db_conn):
-    """A small made-up setup (2 accounts, 3 categories) on top of db_conn; returns (conn, now)."""
-    from datetime import datetime
+    """A small made-up setup (2 accounts, 3 categories) on top of db_conn; returns (conn, now).
+    `now` is a FIXED pretend clock (15 June 2026, 15:00 Amsterdam), so the tests give the same result at any
+    hour of any day (with the real clock, tests run just after midnight used to fail)."""
+    from tests.helpers import FIXED_NOW, make_world
 
-    from tests.helpers import AMS, make_world
-
-    now = datetime.now(AMS)
-    make_world(db_conn, now)
-    return db_conn, now
+    make_world(db_conn, FIXED_NOW)
+    return db_conn, FIXED_NOW

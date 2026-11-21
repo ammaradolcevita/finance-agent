@@ -1,6 +1,6 @@
 """Small helpers shared by the database tests. All names are made up."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal as D
 from zoneinfo import ZoneInfo
 
@@ -8,6 +8,7 @@ from app.services import accounts as acc
 from app.services import transactions as tx
 
 AMS = ZoneInfo("Europe/Amsterdam")
+FIXED_NOW = datetime(2026, 6, 15, 15, 0, tzinfo=AMS)   # a Monday afternoon; tests never use the real clock
 
 
 def make_world(conn, now):

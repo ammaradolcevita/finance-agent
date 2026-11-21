@@ -67,7 +67,8 @@ def fake_db(monkeypatch):
 
 EXPECTED_TOOLS = {"get_context", "add_account", "preview_transactions", "save_draft", "find_transactions",
                   "void_transaction", "update_transaction", "add_category", "update_category",
-                  "merge_categories", "update_account", "run_query", "accounts_overview"}
+                  "merge_categories", "update_account", "run_query", "accounts_overview", "forecast_month",
+                  "account_balance"}
 
 
 @pytest.mark.anyio
