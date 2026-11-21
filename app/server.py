@@ -27,9 +27,11 @@ from app.config import Settings, load_settings
 from app.errors import UserError
 from app.instructions import SERVER_INSTRUCTIONS
 from app.models import (AccountChangeOut, AddAccountOut, CategoryChangeOut, ContextOut, FindOut, MergeOut,
-                        PreviewOut, SaveOut, TransactionIn, TxType, UpdateOut, VoidOut)
+                        OverviewOut, PreviewOut, QueryOut, SaveOut, TransactionIn, TxType, UpdateOut, VoidOut)
 from app.services import accounts as accounts_service
 from app.services import categories as categories_service
+from app.services import overview as overview_service
+from app.services import query as query_service
 from app.services import context as context_service
 from app.services import transactions as tx_service
 
@@ -254,6 +256,33 @@ def update_account(
     with db.tx() as conn:
         return accounts_service.update_account(conn, name, new_name=new_name, description=description,
                                                default_for=default_for, archived=archived, price_ref=price_ref)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(title="Ask the database (read-only SQL)", read_only_hint=True),
+    description="Answer a question about the user's money with ONE read-only PostgreSQL SELECT over the views "
+                "below, e.g. totals per category or month, comparisons, receipt item prices, notes and tags. "
+                "The database itself blocks any change. Prefer accounts_overview for 'where did my money go' "
+                "and find_transactions for listing records.\n\n" + query_service.SCHEMA_CARD,
+)
+@logged_tool
+def run_query(sql: str) -> QueryOut:
+    with db.connect("reader") as conn:
+        return query_service.run_query(conn, sql)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Money roadmap per account", read_only_hint=True))
+@logged_tool
+def accounts_overview(date_from: str | None = None, date_to: str | None = None,
+                      account: str | None = None) -> OverviewOut:
+    """'Where did my money go?' For a period (default: this month so far; dates YYYY-MM-DD) and every account
+    (or one): start balance, money in by source (income categories, transfers from, refunds, gains), money out
+    by destination (categories, transfers to, losses), end balance; real income and spending totals (loans
+    excluded); and `flows` ready for a money-flow chart. Tell it as a story following the transfers (e.g. hub →
+    spending card → categories). The numbers are self-checked; if `warnings` mention a failed check, say so
+    and don't present the numbers as correct."""
+    with db.tx() as conn:
+        return overview_service.accounts_overview(conn, settings().timezone, _now(), date_from, date_to, account)
 
 
 @mcp.custom_route("/health", methods=["GET"])

@@ -5,7 +5,7 @@ Money is Decimal with at most 2 decimals (never float); in JSON it travels as an
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -181,4 +181,54 @@ class MergeOut(BaseModel):
 
 class AccountChangeOut(BaseModel):
     account: AccountOut
+    warnings: list[str] = Field(default_factory=list)
+
+
+class QueryColumn(BaseModel):
+    name: str
+    type: str
+
+
+class QueryOut(BaseModel):
+    columns: list[QueryColumn]
+    rows: list[list[Any]] = Field(description="Money and other numbers come as exact strings")
+    row_count: int
+    truncated: bool = Field(description="True if the answer was cut at the row or size limit")
+
+
+class FlowLine(BaseModel):
+    kind: Literal["income", "refund", "opening", "transfer", "expense", "revaluation"]
+    name: str = Field(description="Category, other account, or 'market'")
+    parent: str | None = Field(None, description="Parent category, if any")
+    amount_eur: Decimal
+
+
+class AccountPeriod(BaseModel):
+    account: str
+    unit: str
+    description: str | None = None
+    start_eur: Decimal = Field(description="Balance at the start of the period (EUR accounts); net euros in for coins")
+    money_in: list[FlowLine]
+    money_out: list[FlowLine]
+    total_in_eur: Decimal
+    total_out_eur: Decimal
+    end_eur: Decimal
+    start_units: Decimal | None = None
+    end_units: Decimal | None = None
+
+
+class Flow(BaseModel):
+    source: str
+    target: str
+    amount_eur: Decimal
+
+
+class OverviewOut(BaseModel):
+    date_from: date
+    date_to: date
+    accounts: list[AccountPeriod]
+    flows: list[Flow] = Field(description="Ready for a money-flow (Sankey) chart: source → target, amount")
+    income_eur: Decimal = Field(description="Real income in the period (borrowed money excluded)")
+    spending_eur: Decimal = Field(description="Spending in the period (refunds subtracted, loans excluded)")
+    checks: list[str] = Field(default_factory=list, description="Self-checks that passed")
     warnings: list[str] = Field(default_factory=list)

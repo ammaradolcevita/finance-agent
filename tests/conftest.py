@@ -49,6 +49,20 @@ def db_conn():
 
 
 @pytest.fixture
+def reader_conn(db_conn):
+    """A finance_reader connection to the same practice branch (guarded through db_conn)."""
+    url = os.environ.get("READONLY_DATABASE_URL")
+    if not url or _host(url) != _host(os.environ["APP_DATABASE_URL"]):
+        pytest.skip("READONLY_DATABASE_URL missing or not on the same database")
+    conn = psycopg.connect(url)
+    try:
+        yield conn
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+@pytest.fixture
 def world(db_conn):
     """A small made-up setup (2 accounts, 3 categories) on top of db_conn; returns (conn, now)."""
     from datetime import datetime

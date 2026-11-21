@@ -67,7 +67,7 @@ def fake_db(monkeypatch):
 
 EXPECTED_TOOLS = {"get_context", "add_account", "preview_transactions", "save_draft", "find_transactions",
                   "void_transaction", "update_transaction", "add_category", "update_category",
-                  "merge_categories", "update_account"}
+                  "merge_categories", "update_account", "run_query", "accounts_overview"}
 
 
 @pytest.mark.anyio
@@ -85,6 +85,8 @@ async def test_tool_list_is_exactly_what_we_expect():
     assert tools["save_draft"].annotations.idempotent_hint is True
     assert tools["merge_categories"].annotations.destructive_hint is True
     assert tools["update_transaction"].annotations.destructive_hint is True
+    assert tools["run_query"].annotations.read_only_hint is True
+    assert "v_spending" in tools["run_query"].description          # Claude sees the schema card
     for t in tools.values():
         assert t.description and len(t.description) > 40, f"{t.name} needs a clear description"
 
