@@ -158,3 +158,27 @@ class VoidOut(BaseModel):
     status: Literal["voided", "restored"]
     transaction: TransactionOut
     warnings: list[str] = Field(default_factory=list)
+
+
+class UpdateOut(BaseModel):
+    transaction: TransactionOut
+    changed: list[str] = Field(description="Which fields changed")
+    warnings: list[str] = Field(default_factory=list)
+
+
+class CategoryChangeOut(BaseModel):
+    category: CategoryOut
+    is_active: bool = True
+    warnings: list[str] = Field(default_factory=list)
+
+
+class MergeOut(BaseModel):
+    source: str
+    target: str
+    moved_transactions: int
+    warnings: list[str] = Field(default_factory=list)
+
+
+class AccountChangeOut(BaseModel):
+    account: AccountOut
+    warnings: list[str] = Field(default_factory=list)

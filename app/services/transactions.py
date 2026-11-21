@@ -22,7 +22,7 @@ from psycopg.types.json import Jsonb
 
 from app.errors import UserError
 from app.models import (FindOut, ItemOut, PreviewOut, SaveOut, TransactionIn, TransactionOut, TxPreview,
-                        VoidOut)
+                        UpdateOut, VoidOut)
 from app.services.accounts import AccountRow, active_accounts, balance_at, opening_moment
 from app.services.dates import check_when, in_words, resolve_when
 from app.services.resolve import Candidate, resolve
@@ -534,3 +534,149 @@ def void_transaction(conn: psycopg.Connection, transaction_id: int, reason: str 
     if later:
         warnings.append(later)
     return VoidOut(status=result, transaction=load_transactions(conn, [transaction_id])[0], warnings=warnings)
+
+
+# --- direct fixes (update) --------------------------------------------------------------
+
+def _exact_active(conn: psycopg.Connection, table: str, text: str) -> tuple[int, str]:
+    """Direct changes need an exact name or alias (no guessing): returns (id, name) or a helpful error."""
+    if table == "accounts":
+        rows = conn.execute("SELECT id, name FROM accounts WHERE is_active").fetchall()
+        candidates = [Candidate(r[0], r[1]) for r in rows]
+    else:
+        rows = conn.execute("SELECT id, name, aliases FROM categories WHERE is_active").fetchall()
+        candidates = [Candidate(r[0], r[1], tuple(r[2] or ())) for r in rows]
+    m = resolve(text, candidates, allow_fuzzy=False)
+    if m.kind == "none":
+        hint = f" Did you mean: {', '.join(m.suggestions)}?" if m.suggestions else ""
+        label = "account" if table == "accounts" else "category"
+        raise UserError("unknown_name", f'No active {label} called "{text}".{hint} Use the exact name.')
+    return m.candidate.id, m.candidate.name
+
+
+def update_transaction(conn: psycopg.Connection, transaction_id: int, tz: ZoneInfo, now: datetime, *,
+                       amount_eur: Decimal | None = None, category: str | None = None, account: str | None = None,
+                       to_account: str | None = None, date: str | None = None, time: str | None = None,
+                       merchant: str | None = None, note: str | None = None, tags: list[str] | None = None,
+                       units: Decimal | None = None) -> UpdateOut:
+    """Fix fields of an existing transaction. The old and new values go to the change log.
+    Text fields: an empty string clears them. To change the type: void it and record it again."""
+    row = conn.execute(
+        "SELECT t.status, t.type, t.amount_eur, t.account_id, t.to_account_id, t.category_id, t.occurred_at,"
+        "       t.merchant, t.note, t.tags, t.units, t.unit, a.unit, "
+        "       (SELECT count(*) FROM items i WHERE i.transaction_id = t.id),"
+        "       (SELECT COALESCE(sum(i.price_eur), 0) FROM items i WHERE i.transaction_id = t.id) "
+        "FROM transactions t JOIN accounts a ON a.id = t.account_id WHERE t.id = %s FOR UPDATE OF t",
+        (transaction_id,)).fetchone()
+    if not row:
+        raise UserError("not_found", f"There is no transaction #{transaction_id}.")
+    (status, type_, old_amount, old_acc, old_to, old_cat, old_when, old_merchant, old_note, old_tags,
+     old_units, old_unit, acc_unit, item_count, items_total) = row
+    if status == "void":
+        raise UserError("is_void", "This transaction is voided. Restore it first (void_transaction with undo=true).")
+    if type_ == "revaluation":
+        raise UserError("not_editable", "A revaluation is calculated from a stated value: void it and record a "
+                                        "new revaluation instead.")
+    _check_cents(amount_eur, "The amount")
+
+    changes: dict[str, tuple[Any, Any]] = {}   # field → (old, new), for the update and the change log
+    warnings: list[str] = []
+
+    if amount_eur is not None and amount_eur != old_amount:
+        if type_ != "opening" and amount_eur <= 0:
+            raise UserError("invalid_amount", "Amounts are positive; the type gives the direction.")
+        changes["amount_eur"] = (old_amount, amount_eur)
+        if item_count and abs(Decimal(items_total) - amount_eur) > RECEIPT_TOLERANCE:
+            warnings.append(f"This receipt's items add up to {Decimal(items_total):.2f} €, which no longer matches "
+                            f"the new total {amount_eur:.2f} €.")
+
+    if category is not None:
+        if type_ in ("opening",):
+            raise UserError("invalid_category", "An opening balance has no category.")
+        cat_id, _ = _exact_active(conn, "categories", category)
+        if cat_id != old_cat:
+            changes["category_id"] = (old_cat, cat_id)
+
+    new_acc, new_to = old_acc, old_to
+    if account is not None:
+        if type_ == "opening":
+            raise UserError("not_editable", "An opening balance belongs to its account; void it and add a new one.")
+        new_acc, _ = _exact_active(conn, "accounts", account)
+    if to_account is not None:
+        if type_ != "transfer":
+            raise UserError("invalid_to_account", "to_account is only for transfers.")
+        new_to, _ = _exact_active(conn, "accounts", to_account)
+    if new_acc != old_acc:
+        changes["account_id"] = (old_acc, new_acc)
+    if new_to != old_to:
+        changes["to_account_id"] = (old_to, new_to)
+    if type_ == "transfer" and new_acc == new_to:
+        raise UserError("invalid_transfer", "A transfer must go to a different account.")
+    unit_of = dict(conn.execute("SELECT id, unit FROM accounts WHERE id = ANY(%s)",
+                                ([a for a in (new_acc, new_to) if a],)).fetchall())
+    if type_ in ("expense", "income", "refund") and unit_of[new_acc] != "EUR":
+        raise UserError("invalid_type", "Coin accounts only take transfers and an opening.")
+
+    if units is not None and units != old_units:
+        if old_unit is None or old_unit == "EUR":
+            raise UserError("invalid_units", "This transaction has no coin or foreign amount to change.")
+        if type_ == "transfer" and unit_of[new_acc] != "EUR":       # coins leave this account
+            _, held = balance_at(conn, new_acc)
+            if units > held + (old_units if new_acc == old_acc else 0):
+                raise UserError("not_enough_coins", "The account doesn't hold that many coins.")
+        changes["units"] = (old_units, units)
+
+    new_when = old_when
+    if date is not None or time is not None:
+        local = old_when.astimezone(tz)
+        new_when, _ = resolve_when(date or local.date().isoformat(), time, tz, now)
+        error, old_warning = check_when(new_when, now)
+        if error:
+            raise UserError("invalid_date", error)
+        if old_warning:
+            warnings.append(old_warning)
+        if new_when != old_when:
+            changes["occurred_at"] = (old_when, new_when)
+    month_start = now.astimezone(tz).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if changes and min(old_when, new_when) < month_start:
+        warnings.append("This changes an earlier month; totals of a month you may already have reviewed change too.")
+
+    for field_name, new_value, old_value in (("merchant", merchant, old_merchant), ("note", note, old_note)):
+        if new_value is not None:
+            cleaned = new_value.strip() or None
+            if cleaned != old_value:
+                changes[field_name] = (old_value, cleaned)
+    if tags is not None:
+        cleaned_tags = sorted({tag.strip().lower() for tag in tags if tag.strip()})
+        if cleaned_tags != list(old_tags or []):
+            changes["tags"] = (list(old_tags or []), cleaned_tags)
+
+    if not changes:
+        raise UserError("no_change", "Nothing to change: the values are the same as before.")
+
+    # Fixed column names only (from our own list above); the values travel as parameters.
+    sets = ", ".join(f"{column} = %s" for column in changes) + ", updated_at = now()"
+    try:
+        conn.execute("UPDATE transactions SET " + sets + " WHERE id = %s",
+                     (*[new for _, new in changes.values()], transaction_id))
+    except errors.CheckViolation as e:
+        raise UserError("invalid_change", "That change breaks a rule of the ledger (e.g. a category is required "
+                                          "for expenses).") from e
+    _log(conn, transaction_id, "update",
+         {k: _jsonable(old) for k, (old, _) in changes.items()},
+         {k: _jsonable(new) for k, (_, new) in changes.items()})
+
+    later = _later_revaluation_warning(conn, [a for a in {old_acc, new_acc, old_to, new_to} if a],
+                                       min(old_when, new_when))
+    if later:
+        warnings.append(later)
+    return UpdateOut(transaction=load_transactions(conn, [transaction_id])[0], changed=list(changes),
+                     warnings=warnings)
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value

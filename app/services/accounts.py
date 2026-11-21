@@ -10,11 +10,12 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 from app.errors import UserError
-from app.models import AccountOut, AddAccountOut
+from app.models import AccountChangeOut, AccountOut, AddAccountOut
 from app.services.dates import check_when, resolve_when
-from app.services.resolve import Candidate
+from app.services.resolve import Candidate, resolve
 
 UNIT_RE = re.compile(r"^[A-Z0-9]{2,10}$")
 
@@ -142,3 +143,72 @@ def add_account(
 
     account = next(a for a in list_accounts(conn, include_archived=True) if a.id == account_id)
     return AddAccountOut(account=account, opening_transaction_id=opening_id, warnings=warnings)
+
+
+def update_account(conn: psycopg.Connection, name: str, *, new_name: str | None = None,
+                   description: str | None = None, default_for: str | None = None, archived: bool | None = None,
+                   price_ref: str | None = None) -> AccountChangeOut:
+    """Rename, describe, change defaults ('expense', 'income', 'both' or 'none'), archive or restore an account.
+    The unit can't change once the account exists. Archiving is only allowed at balance 0 (euros and coins),
+    so money never silently disappears from the totals. Every change goes to the change log."""
+    rows = conn.execute("SELECT id, name, description, unit, is_default_expense, is_default_income, is_active, "
+                        "price_ref FROM accounts").fetchall()
+    m = resolve(name, [Candidate(r[0], r[1]) for r in rows], allow_fuzzy=False)
+    if m.kind == "none":
+        hint = f" Did you mean: {', '.join(m.suggestions)}?" if m.suggestions else ""
+        raise UserError("unknown_account", f'No account called "{name}".{hint} Use the exact name.')
+    aid, old_name, old_desc, unit, old_exp, old_inc, old_active, old_ref = next(r for r in rows if r[0] == m.candidate.id)
+    old = {"name": old_name, "description": old_desc, "is_default_expense": old_exp, "is_default_income": old_inc,
+           "is_active": old_active, "price_ref": old_ref}
+    new = dict(old)
+    warnings: list[str] = []
+
+    if new_name is not None:
+        new_name = " ".join(new_name.split())
+        if not new_name:
+            raise UserError("invalid_name", "The new name can't be empty.")
+        if any(r[1].casefold() == new_name.casefold() and r[0] != aid for r in rows):
+            raise UserError("name_taken", f"An account named '{new_name}' already exists.")
+        new["name"] = new_name
+    if description is not None:
+        new["description"] = description.strip() or None
+    if price_ref is not None:
+        if unit == "EUR":
+            raise UserError("invalid_price_ref", "price_ref is only for coin accounts.")
+        new["price_ref"] = price_ref.strip() or None
+    if default_for is not None:
+        if default_for not in ("expense", "income", "both", "none"):
+            raise UserError("invalid_default", "default_for must be expense, income, both or none.")
+        if unit != "EUR" and default_for != "none":
+            raise UserError("invalid_default", "A coin account can't be a default account.")
+        new["is_default_expense"] = default_for in ("expense", "both")
+        new["is_default_income"] = default_for in ("income", "both")
+    if archived is not None:
+        if archived:
+            euros, coins = balance_at(conn, aid)
+            if euros != 0 or coins != 0:
+                shown = f"{coins} {unit}" if unit != "EUR" else f"{euros:.2f} €"
+                raise UserError("not_empty", f"{old_name} still holds {shown}. Move the money out (a transfer) "
+                                             "before archiving, so it doesn't disappear from the totals.")
+            if new["is_default_expense"] or new["is_default_income"]:
+                new["is_default_expense"] = new["is_default_income"] = False
+                warnings.append("It was a default account; choose a new default account.")
+        new["is_active"] = not archived
+
+    changed = {k: v for k, v in new.items() if v != old[k]}
+    if not changed:
+        raise UserError("no_change", "Nothing to change: the values are the same as before.")
+    if new["is_default_expense"] and not old_exp:
+        conn.execute("UPDATE accounts SET is_default_expense = FALSE WHERE is_default_expense")
+    if new["is_default_income"] and not old_inc:
+        conn.execute("UPDATE accounts SET is_default_income = FALSE WHERE is_default_income")
+    conn.execute(
+        "UPDATE accounts SET name = %s, description = %s, is_default_expense = %s, is_default_income = %s, "
+        "is_active = %s, price_ref = %s WHERE id = %s",
+        (new["name"], new["description"], new["is_default_expense"], new["is_default_income"], new["is_active"],
+         new["price_ref"], aid))
+    conn.execute("INSERT INTO change_log (entity, entity_id, action, old_values, new_values) "
+                 "VALUES ('account', %s, 'update', %s, %s)",
+                 (aid, Jsonb({k: old[k] for k in changed}), Jsonb(changed)))
+    account = next(a for a in list_accounts(conn, include_archived=True) if a.id == aid)
+    return AccountChangeOut(account=account, warnings=warnings)

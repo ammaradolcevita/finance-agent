@@ -26,9 +26,10 @@ from app.auth import BearerAuthMiddleware
 from app.config import Settings, load_settings
 from app.errors import UserError
 from app.instructions import SERVER_INSTRUCTIONS
-from app.models import (AddAccountOut, ContextOut, FindOut, PreviewOut, SaveOut, TransactionIn, TxType,
-                        VoidOut)
+from app.models import (AccountChangeOut, AddAccountOut, CategoryChangeOut, ContextOut, FindOut, MergeOut,
+                        PreviewOut, SaveOut, TransactionIn, TxType, UpdateOut, VoidOut)
 from app.services import accounts as accounts_service
+from app.services import categories as categories_service
 from app.services import context as context_service
 from app.services import transactions as tx_service
 
@@ -165,6 +166,94 @@ def void_transaction(transaction_id: int, reason: str = "", undo: bool = False,
     (use find_transactions to show which one). Voiding an opening balance needs confirm_opening=true."""
     with db.tx() as conn:
         return tx_service.void_transaction(conn, transaction_id, reason, undo, confirm_opening)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Fix a transaction", destructive_hint=True))
+@logged_tool
+def update_transaction(
+    transaction_id: int,
+    amount_eur: Decimal | None = None,
+    category: str | None = None,
+    account: str | None = None,
+    to_account: str | None = None,
+    date: str | None = None,
+    time: str | None = None,
+    merchant: str | None = None,
+    note: str | None = None,
+    tags: list[str] | None = None,
+    units: Decimal | None = None,
+) -> UpdateOut:
+    """Fix fields of a recorded transaction ("it was 2.80, not 2.40", wrong category/account/date, add a note).
+    Give only the fields that change; an empty string clears merchant or note; tags replaces the list.
+    Names must match exactly or by alias. Old and new values are kept in the history. To change the type,
+    void and record again. Show the user what will change and get a yes before calling."""
+    with db.tx() as conn:
+        return tx_service.update_transaction(
+            conn, transaction_id, settings().timezone, _now(), amount_eur=amount_eur, category=category,
+            account=account, to_account=to_account, date=date, time=time, merchant=merchant, note=note,
+            tags=tags, units=units)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Add category"))
+@logged_tool
+def add_category(name: str, kind: Literal["regular", "structural", "excluded"] = "regular",
+                 parent: str | None = None, description: str | None = None,
+                 aliases: list[str] | None = None) -> CategoryChangeOut:
+    """Create a category. kind: regular = everyday spending (in the forecast); structural = counts as
+    spending but not in the forecast (rent, travel); excluded = neither spending nor income (loans).
+    parent = an existing top-level category (two levels at most). description = one line on what belongs
+    here (helps choose categories later). aliases = other words for it (e.g. 'AH'). Confirm with the user first."""
+    with db.tx() as conn:
+        return categories_service.add_category(conn, name, kind, parent, description, aliases)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Change category"))
+@logged_tool
+def update_category(
+    name: str,
+    new_name: str | None = None,
+    kind: Literal["regular", "structural", "excluded"] | None = None,
+    parent: str | None = None,
+    remove_parent: bool = False,
+    description: str | None = None,
+    add_aliases: list[str] | None = None,
+    remove_aliases: list[str] | None = None,
+    archived: bool | None = None,
+) -> CategoryChangeOut:
+    """Rename, move under a parent (or remove_parent), change kind or description, add/remove aliases,
+    archive (archived=true) or restore (archived=false) a category. All history follows a rename
+    automatically. Names must match exactly or by alias. Explain the change and get a yes first."""
+    with db.tx() as conn:
+        return categories_service.update_category(
+            conn, name, new_name=new_name, kind=kind, parent=parent, remove_parent=remove_parent,
+            description=description, add_aliases=add_aliases, remove_aliases=remove_aliases, archived=archived)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Merge categories", destructive_hint=True))
+@logged_tool
+def merge_categories(source: str, target: str) -> MergeOut:
+    """Move every transaction of source into target, archive source and keep its name as an alias of target
+    (old words still work). Logged with the moved ids. Use when two categories mean the same thing; explain
+    and get a clear yes first."""
+    with db.tx() as conn:
+        return categories_service.merge_categories(conn, source, target)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Change account"))
+@logged_tool
+def update_account(
+    name: str,
+    new_name: str | None = None,
+    description: str | None = None,
+    default_for: Literal["expense", "income", "both", "none"] | None = None,
+    archived: bool | None = None,
+    price_ref: str | None = None,
+) -> AccountChangeOut:
+    """Rename an account, change its description, make it the default for daily expenses/income (or none),
+    archive it (only when its balance is 0) or restore it. The unit can't change. Get a yes first."""
+    with db.tx() as conn:
+        return accounts_service.update_account(conn, name, new_name=new_name, description=description,
+                                               default_for=default_for, archived=archived, price_ref=price_ref)
 
 
 @mcp.custom_route("/health", methods=["GET"])

@@ -1,9 +1,8 @@
 """Step 4 on a real PostgreSQL (the practice branch), every test rolled back afterwards.
 All names are made up. Skipped unless run with: uv run --env-file .env pytest"""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal as D
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -11,37 +10,7 @@ from app.errors import UserError
 from app.models import ItemIn, TransactionIn as T
 from app.services import accounts as acc
 from app.services import transactions as tx
-
-AMS = ZoneInfo("Europe/Amsterdam")
-
-
-@pytest.fixture
-def world(db_conn):
-    """Two euro accounts (opened an hour ago) and a few made-up categories, inside the test's transaction."""
-    now = datetime.now(AMS)
-    start = now - timedelta(hours=1)
-    common = dict(unit="EUR", opening_units=None, opening_date=None, opening_time=None, price_ref=None, tz=AMS)
-    acc.add_account(db_conn, name="Test Main Bank", description="hub", opening_amount_eur=D("600"),
-                    default_for="income", now=start, **common)
-    acc.add_account(db_conn, name="Test Card", description="daily spending", opening_amount_eur=D("150"),
-                    default_for="expense", now=start, **common)
-    db_conn.execute("INSERT INTO categories (name, kind) VALUES ('Test Groceries Alpha', 'regular'), "
-                    "('Test Loans Zeta', 'excluded'), ('Test Rent Omega', 'structural')")
-    return db_conn, now
-
-
-def balance(conn, name):
-    return {a.name: a for a in acc.list_accounts(conn)}[name].balance_eur
-
-
-def preview(conn, now, *txs, **kw):
-    return tx.preview_transactions(conn, list(txs), AMS, now, **kw)
-
-
-def record(conn, now, *txs):
-    p = preview(conn, now, *txs)
-    assert p.status == "ready", p.questions
-    return tx.save_draft(conn, p.draft_id)
+from tests.helpers import AMS, balance, preview, record
 
 
 # --- accounts ------------------------------------------------------------------------

@@ -46,3 +46,15 @@ def db_conn():
     finally:
         conn.rollback()   # nothing a test did is kept
         conn.close()
+
+
+@pytest.fixture
+def world(db_conn):
+    """A small made-up setup (2 accounts, 3 categories) on top of db_conn; returns (conn, now)."""
+    from datetime import datetime
+
+    from tests.helpers import AMS, make_world
+
+    now = datetime.now(AMS)
+    make_world(db_conn, now)
+    return db_conn, now
