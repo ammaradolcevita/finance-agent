@@ -321,13 +321,22 @@ def create_app(config: Settings | None = None) -> ASGIApp:
     _settings = config
     security = None  # local default: only 127.0.0.1 / localhost host names are accepted
     if config.allowed_hosts:
-        security = TransportSecuritySettings(allowed_hosts=list(config.allowed_hosts))
+        # Only requests addressed to our own public name are accepted (protects against "DNS rebinding").
+        security = TransportSecuritySettings(
+            allowed_hosts=[*config.allowed_hosts, *(f"{h}:*" for h in config.allowed_hosts)],
+            allowed_origins=["https://claude.ai", "https://claude.com"],
+        )
     app = mcp.streamable_http_app(stateless_http=True, json_response=True, transport_security=security)
     return BearerAuthMiddleware(app, config.tokens)
 
 
 if __name__ == "__main__":
+    import os
+
     import uvicorn
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    uvicorn.run(create_app(), host="127.0.0.1", port=8000, access_log=False)
+    # On Render, PORT is set and the server must listen on all interfaces; locally: 127.0.0.1:8000 only.
+    port = os.environ.get("PORT")
+    uvicorn.run(create_app(), host="0.0.0.0" if port else "127.0.0.1", port=int(port or 8000),
+                access_log=False, proxy_headers=True, forwarded_allow_ips="*")

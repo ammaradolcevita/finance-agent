@@ -43,5 +43,8 @@ def load_settings(env: Mapping[str, str] = os.environ) -> Settings:
     except (ZoneInfoNotFoundError, ValueError) as e:
         raise ConfigError(f"APP_TIMEZONE '{tz_name}' is not a known time zone") from e
 
-    hosts = tuple(h.strip() for h in env.get("ALLOWED_HOSTS", "").split(",") if h.strip())
-    return Settings(tokens=tuple(tokens), timezone=timezone, allowed_hosts=hosts)
+    hosts = [h.strip() for h in env.get("ALLOWED_HOSTS", "").split(",") if h.strip()]
+    render_host = env.get("RENDER_EXTERNAL_HOSTNAME", "").strip()   # set automatically by Render
+    if render_host and render_host not in hosts:
+        hosts.append(render_host)
+    return Settings(tokens=tuple(tokens), timezone=timezone, allowed_hosts=tuple(hosts))

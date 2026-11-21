@@ -93,3 +93,22 @@ def test_mcp_with_right_token_passes_the_guard(client):
 
 def test_unknown_paths_are_protected_too(client):
     assert client.get("/anything").status_code == 401
+
+
+# --- deployed: only our public host name is accepted ------------------------------
+
+def test_render_hostname_is_picked_up_automatically():
+    s = load_settings({"MCP_TOKEN": GOOD, "RENDER_EXTERNAL_HOSTNAME": "my-app.onrender.com"})
+    assert s.allowed_hosts == ("my-app.onrender.com",)
+
+
+def test_deployed_server_rejects_other_host_names():
+    from app.server import create_app
+
+    app = create_app(load_settings({"MCP_TOKEN": GOOD, "RENDER_EXTERNAL_HOSTNAME": "my-app.onrender.com"}))
+    auth = {"Authorization": "Bearer " + GOOD, "Content-Type": "application/json"}
+    with TestClient(app, base_url="https://my-app.onrender.com") as c:   # one server start per app
+        assert c.post("/mcp", json={}, headers=auth).status_code != 421       # our host name passes
+        wrong = {**auth, "host": "evil.example.com"}
+        assert c.post("/mcp", json={}, headers=wrong).status_code == 421      # any other host name: refused
+        assert c.get("/health").status_code == 200
