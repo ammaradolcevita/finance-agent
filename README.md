@@ -13,7 +13,7 @@ I tell it what I bought, in plain words or with a receipt photo. It records the 
 
 ## Why I built this
 
-For months I tracked every euro by hand. Every evening I sat down with the day's receipts from Albert Heijn, Jumbo and a coffee from DE Café. I typed each one into **Money Flow**, a budgeting app I paid for every year: category, amount, account, note. Then I checked it all against my bank.
+For months I tracked every euro by hand. Every evening I sat down with the day's receipts from Albert Heijn, Jumbo and a coffee bill from DE Café. I typed each one into **Money Flow**, a budgeting app I paid for every year: category, amount, account, note. Then I checked it all against my bank.
 
 It was a daily chore, and it still couldn't tell me things like *which groceries got more expensive since spring, and what that costs me per month*.
 
